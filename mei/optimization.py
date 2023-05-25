@@ -6,17 +6,20 @@ import random
 import torch
 from torch import Tensor
 from torch.optim.optimizer import Optimizer
+import wandb
+import matplotlib.pyplot as plt
 
 from .domain import Input, State
 from .stoppers import OptimizationStopper
 from .tracking import Tracker
 
-#from .background_helper import bg_gen,bg_wn
+# from .background_helper import bg_gen,bg_wn
 
 # noinspection PyUnusedLocal
 def default_transform(mei: Tensor, i_iteration: int) -> Tensor:
     """Default transform used when no transform is provided to MEI."""
     return mei
+
 
 # noinspection PyUnusedLocal
 def default_regularization(mei: Tensor, i_iteration: int) -> Tensor:
@@ -35,36 +38,42 @@ def default_postprocessing(mei: Tensor, i_iteration: int) -> Tensor:
     """Default postprocessing function used when not postprocessing function is provided to MEI."""
     return mei
 
+
 # noinspection PyUnusedLocal
 def default_background(mei: Tensor, i_iteration: int) -> Tensor:
     """Default postprocessing function used when not postprocessing function is provided to MEI."""
     return None
+
 
 # noinspection PyUnusedLocal
 def default_transform(mei: Tensor, i_iteration: int) -> Tensor:
     """Default transform used when no transform is provided to MEI."""
     return mei
 
+
 import numpy as np
+
+
 class MEI:
     """Wrapper around the function and the MEI tensor."""
 
     input_cls = Input
     state_cls = State
- 
+
     def __init__(
         self,
         func: Callable[[Tensor], Tensor],
         initial: Tensor,
         optimizer: Optimizer,
-        transparency,#: False, then normal MEI without transparencytransform: Callable[[Tensor, int], Tensor] = default_transform,
+        transparency,  #: False, then normal MEI without transparencytransform: Callable[[Tensor, int], Tensor] = default_transform,
         inhibitory,  # for ring or surround MEI: if False, then excitatory
         transparency_weight: float = 0.0,
         transform: Callable[[Tensor, int], Tensor] = default_transform,
         regularization: Callable[[Tensor, int], Tensor] = default_regularization,
         precondition: Callable[[Tensor, int], Tensor] = default_precondition,
         postprocessing: Callable[[Tensor, int], Tensor] = default_postprocessing,
-        background:  Callable[[Tensor, int], Tensor] = default_background,
+        background: Callable[[Tensor, int], Tensor] = default_background,
+        use_wandb_every_n_epochs: int = None,
     ):
         """Initializes MEI.
 
@@ -98,6 +107,7 @@ class MEI:
         self._transformed = None
         self.background = background
         self.inhibitory = inhibitory
+        self.use_wandb_every_n_epochs = use_wandb_every_n_epochs
 
         print(f"Using a transparency weight of {self.transparency_weight}")
 
@@ -108,14 +118,16 @@ class MEI:
         return self._transformed
 
     def transparentize(self) -> Tensor:
-        ch_img, ch_alpha = self._current_input.tensor[:, [0], ...], self._current_input.tensor[:,-1,...]
-        ch_bg=self.background(self._current_input.tensor, self.i_iteration).cuda()[[0], ...] * self.transparency_weight
-        transparentized_mei = ch_bg[[0]]*(1.0-ch_alpha) + ch_img*ch_alpha
-        transparentized_mei = torch.cat((transparentized_mei, self._current_input.tensor[:,1:-1,...]),dim=1)
+        ch_img, ch_alpha = self._current_input.tensor[:, [0], ...], self._current_input.tensor[:, -1, ...]
+        ch_bg = (
+            self.background(self._current_input.tensor, self.i_iteration).cuda()[[0], ...] * self.transparency_weight
+        )
+        transparentized_mei = ch_bg[[0]] * (1.0 - ch_alpha) + ch_img * ch_alpha
+        transparentized_mei = torch.cat((transparentized_mei, self._current_input.tensor[:, 1:-1, ...]), dim=1)
         return transparentized_mei
 
     def mean_alpha_value(self) -> Tensor:
-        return torch.mean( self._current_input.tensor[:,-1,...])
+        return torch.mean(self._current_input.tensor[:, -1, ...])
 
     def evaluate(self) -> Tensor:
         """Evaluates the function on the current MEI."""
@@ -127,21 +139,23 @@ class MEI:
     def step(self) -> State:
         """Performs an optimization step."""
         state = dict(i_iter=self.i_iteration, input_=self._current_input.cloned_data)
-        self.optimizer.zero_grad()        
-        evaluation = self.evaluate() * (self.inhibitory!=True) + self.evaluate()*(self.inhibitory==True)*(-1)
-        #print('eval 1 ',evaluation.item())
+        self.optimizer.zero_grad()
+        evaluation = self.evaluate() * (self.inhibitory != True) + self.evaluate() * (self.inhibitory == True) * (-1)
+        # print('eval 1 ',evaluation.item())
         state["evaluation"] = evaluation.item()
 
-        state["transformed_input"] = self._transformed_input.data.cpu().clone() ### may need to change
+        state["transformed_input"] = self._transformed_input.data.cpu().clone()  ### may need to change
 
         if self.transparency:
-            mean_alpha_value=self.mean_alpha_value()
+            mean_alpha_value = self.mean_alpha_value()
             reg_term = self.regularization(mean_alpha_value, self.i_iteration)
-            ( (-evaluation + reg_term)*(1-mean_alpha_value*self.transparency_weight) ).backward() ### add transparency to objective; mean_alpha_value here should be a function?
+            (
+                (-evaluation + reg_term) * (1 - mean_alpha_value * self.transparency_weight)
+            ).backward()  ### add transparency to objective; mean_alpha_value here should be a function?
         else:
             reg_term = self.regularization(self._transformed_input, self.i_iteration)
             (-evaluation + reg_term).backward()
-                    
+
         state["reg_term"] = reg_term.item()
 
         if self._current_input.grad is None:
@@ -151,14 +165,29 @@ class MEI:
         self._current_input.grad = self.precondition(self._current_input.grad, self.i_iteration)
         # update gradient use transparency gradient
         state["preconditioned_grad"] = self._current_input.cloned_grad
-        self.optimizer.step() # current_input already changed here??
+        self.optimizer.step()  # current_input already changed here??
 
         # post process new mei after optimization
         self._current_input.data = self.postprocessing(self._current_input.data, self.i_iteration)
         state["post_processed_input"] = self._current_input.cloned_data
 
+        if self.use_wandb_every_n_epochs is not None and self.i_iteration % self.use_wandb_every_n_epochs == 0:
+            fig, ax = plt.subplots(1, 1)
+            ax.imshow(self._current_input.cloned_data.squeeze(), cmap="gray")
+            ax.axis("off")
+            plt.close()
+
+            wandb.log(
+                {
+                    "mei": wandb.Image(fig),
+                    "iteration": self.i_iteration,
+                    "evaluation": evaluation.item(),
+                }
+            )
+
         self._transformed = None
         self.i_iteration += 1
+
         return self.state_cls.from_dict(state)
 
     def __repr__(self) -> str:
@@ -190,4 +219,3 @@ def optimize(mei: MEI, stopper: OptimizationStopper, tracker: Tracker) -> Tuple[
         if stop:
             break
     return current_state.evaluation, current_state.post_processed_input
-
