@@ -250,7 +250,7 @@ class MEITemplateMixin:
         dataloaders, model = self.model_loader.load(key=key)
         seed = (self.seed_table() & key).fetch1("mei_seed")
         output_selected_model = self.selector_table().get_output_selected_model(model, key)
-        self.add_params_to_model(model, key)
+        self.add_params_to_model(output_selected_model, key)
         mei_entity = self.method_table().generate_mei(dataloaders, output_selected_model, key, seed)
         self._insert_mei(mei_entity)
 
@@ -258,8 +258,8 @@ class MEITemplateMixin:
         # If a "VEI" will be optimized, add the MEI activation to the model
         if (self.method_table & key).fetch1("method_config").get("mei_class_name", "MEI") == "VEI":
             # Get all entries in the Method table for which an entry in the MEI table exists
-            new_key = {k: v for k, v in key.items() if key not in ["method_fn", "method_hash"]}
-            method_fns, method_hashs, method_configs, scores = (self.method_table * self() & new_key).fetch(
+            new_key = {k: v for k, v in key.items() if k not in ["method_fn", "method_hash"]}
+            method_fns, method_hashs, method_configs, scores = (self.method_table * self & new_key).fetch(
                 "method_fn", "method_hash", "method_config", "score"
             )
             # Get the scores of the entries for which an "MEI" was optimized
@@ -268,7 +268,7 @@ class MEITemplateMixin:
                 for method_config, score in zip(method_configs, scores)
                 if method_config.get("mei_class_name", "MEI") == "MEI"
             ]
-            model.mei_score = mei_scores.max()
+            model.mei_score = max(mei_scores)
 
     def _insert_mei(self, mei_entity: Dict[str, Any]) -> None:
         """Saves the MEI to a temporary directory and inserts the prepared entity into the table."""
