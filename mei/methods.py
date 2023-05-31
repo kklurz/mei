@@ -156,5 +156,5 @@ def gradient_ascent(
         use_wandb_every_n_epochs=config.get("use_wandb_every_n_epochs", None),
     )
 
-    final_evaluation, mei = optimize_func(mei, stopper, tracker)
-    return mei, final_evaluation, tracker.log
+    final_evaluation, mei, mean, variance = optimize_func(mei, stopper, tracker)
+    return mei, final_evaluation, tracker.log, mean, variance

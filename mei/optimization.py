@@ -131,18 +131,22 @@ class MEI:
 
     def evaluate(self) -> Tensor:
         """Evaluates the function on the current MEI."""
-        if self.transparency:
-            return self.func(self.transparentize().float())
-        else:
-            return self.func(self._transformed_input)
+        input = self.transparentize().float() if self.transparency else self._transformed_input
+
+        mean = self.func.predict_mean(input)
+        variance = self.func.predict_variance(input)
+        return mean, mean, variance
 
     def step(self) -> State:
         """Performs an optimization step."""
         state = dict(i_iter=self.i_iteration, input_=self._current_input.cloned_data)
         self.optimizer.zero_grad()
-        evaluation = self.evaluate() * (self.inhibitory != True) + self.evaluate() * (self.inhibitory == True) * (-1)
+        objective, mean, variance = self.evaluate()
+        evaluation = objective * (self.inhibitory != True) + objective * (self.inhibitory == True) * (-1)
         # print('eval 1 ',evaluation.item())
         state["evaluation"] = evaluation.item()
+        state["mean"] = mean.item()
+        state["variance"] = variance.item()
 
         state["transformed_input"] = self._transformed_input.data.cpu().clone()  ### may need to change
 
@@ -218,4 +222,4 @@ def optimize(mei: MEI, stopper: OptimizationStopper, tracker: Tracker) -> Tuple[
         tracker.track(current_state)
         if stop:
             break
-    return current_state.evaluation, current_state.post_processed_input
+    return current_state.evaluation, current_state.post_processed_input, current_state.mean, current_state.variance

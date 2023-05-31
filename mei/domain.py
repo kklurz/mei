@@ -84,6 +84,8 @@ class State:
         post_processed_input: Tensor,
         grad: Tensor,
         preconditioned_grad: Tensor,
+        mean: Tensor,
+        variance: Tensor,
         stopper_output: Optional[Any] = None,
     ):
         self.i_iter = i_iter
@@ -95,6 +97,8 @@ class State:
         self.post_processed_input = post_processed_input
         self.grad = grad
         self.preconditioned_grad = preconditioned_grad
+        self.mean = mean
+        self.variance = variance
         self.stopper_output = stopper_output
 
     def __repr__(self) -> str:
@@ -112,6 +116,8 @@ class State:
             post_processed_input=self.post_processed_input,
             grad=self.grad,
             preconditioned_grad=self.preconditioned_grad,
+            mean=self.mean,
+            variance=self.variance,
             stopper_output=self.stopper_output,
         )
 

@@ -44,6 +44,24 @@ class EnsembleModel(Module):
             out = torch.stack(outputs, dim=0).mean(dim=0)
         return out
 
+    def predict_mean(self, x, *args, **kwargs):
+        means = [m.predict_mean(x, *args, **kwargs) for m in self.members]
+        if kwargs.get("avg") is False:
+            mean = torch.stack(means, dim=0)
+        else:
+            mean = torch.stack(means, dim=0).mean(dim=0)
+        return mean
+
+    def predict_variance(self, x, *args, **kwargs):
+        mean_kwargs = kwargs.copy()
+        mean_kwargs["avg"] = False
+        means = self.predict_mean(x, *args, **mean_kwargs)
+        variances = torch.stack([m.predict_variance(x, *args, **kwargs) for m in self.members], dim=0)
+
+        # See this article for the computation of the variance of a mixture model: https://en.wikipedia.org/wiki/Mixture_distribution#Moments
+        variance = (variances + means).mean(0) - means.mean(0)
+        return variance
+
     def __repr__(self):
         return f"{self.__class__.__qualname__}({', '.join(m.__repr__() for m in self.members)})"
 
@@ -94,8 +112,21 @@ class ConstrainedOutputModel(Module):
             else self.target_fn(output[:, self.constraint])
         )
 
+    def predict_mean(self, x, *args, **kwargs):
+        mean = self.model.predict_mean(x, *args, **self.forward_kwargs, **kwargs)
+        return (
+            self.target_fn(mean)
+            if self.constraint is None or len(self.constraint) == 0
+            else self.target_fn(mean[:, self.constraint])
+        )
+
+    def predict_variance(self, x, *args, **kwargs):
+        variance = self.model.predict_variance(x, *args, **self.forward_kwargs, **kwargs)
+        return variance if self.constraint is None or len(self.constraint) == 0 else variance[:, self.constraint]
+
     def __repr__(self):
         return f"{self.__class__.__qualname__}({self.model}, {self.constraint}, forward_kwargs={self.forward_kwargs})"
+
 
 class ContrastiveOutputModel(Module):
     """A model that has its output constrained.
@@ -109,7 +140,9 @@ class ContrastiveOutputModel(Module):
             called. Optional.
     """
 
-    def __init__(self, model1: Module, model2: Module, constraint: int, target_fn=None, forward_kwargs: Dict[str, Any] = None):
+    def __init__(
+        self, model1: Module, model2: Module, constraint: int, target_fn=None, forward_kwargs: Dict[str, Any] = None
+    ):
         """Initializes ConstrainedOutputModel."""
         super().__init__()
         if target_fn is None:
@@ -133,7 +166,7 @@ class ContrastiveOutputModel(Module):
         """
         output1 = self.model1(x, *args, **self.forward_kwargs, **kwargs)
         output2 = self.model2(x, *args, **self.forward_kwargs, **kwargs)
-        contrast_output=output1-output2
+        contrast_output = output1 - output2
         return self.target_fn(contrast_output[:, self.constraint])
 
     def __repr__(self):
