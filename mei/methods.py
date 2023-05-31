@@ -103,6 +103,8 @@ def gradient_ascent(
             "transparency_weight",
             "inhibitory",
             "use_wandb_every_n_epochs",
+            "ref_level",
+            "variance_optimization",
         ):
             continue
         if "kwargs" not in component_config:
@@ -154,6 +156,8 @@ def gradient_ascent(
         transparency_weight=transparency_weight,
         **optional,
         use_wandb_every_n_epochs=config.get("use_wandb_every_n_epochs", None),
+        ref_level=config.get("ref_level", None),
+        variance_optimization=config.get("variance_optimization", None),
     )
 
     final_evaluation, mei, mean, variance = optimize_func(mei, stopper, tracker)

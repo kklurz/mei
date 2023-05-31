@@ -74,6 +74,8 @@ class MEI:
         postprocessing: Callable[[Tensor, int], Tensor] = default_postprocessing,
         background: Callable[[Tensor, int], Tensor] = default_background,
         use_wandb_every_n_epochs: int = None,
+        ref_level: int = None,  # only for VEIs
+        variance_optimization: str = None,  # only for VEIs
     ):
         """Initializes MEI.
 
@@ -108,6 +110,8 @@ class MEI:
         self.background = background
         self.inhibitory = inhibitory
         self.use_wandb_every_n_epochs = use_wandb_every_n_epochs
+        self.ref_level = ref_level
+        self.variance_optimization = variance_optimization
 
         print(f"Using a transparency weight of {self.transparency_weight}")
 
@@ -200,6 +204,22 @@ class MEI:
             f"transform={self.transform}, regularization={self.regularization}, precondition={self.precondition}, "
             f"postprocessing={self.postprocessing})"
         )
+
+
+class VEI(MEI):
+    def evaluate(self) -> Tensor:
+        """Evaluates the function on the current VEI."""
+        _, mean, variance = super().evaluate()
+
+        diff = self.ref_level - mean / self.func.mei_score
+
+        if self.variance_optimization == "max":
+            objective = -(diff**2) + variance
+        elif self.variance_optimization == "min":
+            objective = -(diff**2) - variance
+        else:
+            raise ValueError()
+        return objective, mean, variance
 
 
 def optimize(mei: MEI, stopper: OptimizationStopper, tracker: Tracker) -> Tuple[float, Tensor]:
