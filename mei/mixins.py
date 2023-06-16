@@ -8,6 +8,7 @@ from string import ascii_letters
 from random import choice
 
 import torch
+import numpy as np
 from torch.nn import Module
 from torch.utils.data import DataLoader
 from nnfabrik.utility.dj_helpers import make_hash
@@ -190,6 +191,8 @@ class MEIMethodMixin:
             mei_class = optimization.MEI
         elif mei_class_name == "VEI":
             mei_class = optimization.VEI
+        elif mei_class_name == "CEI":
+            mei_class = optimization.CEI
         else:
             raise ValueError(f"mei_class_name '{mei_class_name}' not recognized")
         mei, score, output, mean, variance = method_fn(dataloaders, model, method_config, seed, mei_class=mei_class)
@@ -246,29 +249,49 @@ class MEITemplateMixin:
         super().__init__(*args, **kwargs)
         self.model_loader = self.model_loader_class(self.trained_model_table, cache_size_limit=cache_size_limit)
 
-    def make(self, key: Key) -> None:
+    def make(self, key: Key, return_before_inserting=False) -> None:
         dataloaders, model = self.model_loader.load(key=key)
         seed = (self.seed_table() & key).fetch1("mei_seed")
         output_selected_model = self.selector_table().get_output_selected_model(model, key)
         self.add_params_to_model(output_selected_model, key)
         mei_entity = self.method_table().generate_mei(dataloaders, output_selected_model, key, seed)
+        if return_before_inserting:
+            return mei_entity
         self._insert_mei(mei_entity)
 
     def add_params_to_model(self, model, key):
-        # If a "VEI" will be optimized, add the MEI activation to the model
-        if (self.method_table & key).fetch1("method_config").get("mei_class_name", "MEI") == "VEI":
-            # Get all entries in the Method table for which an entry in the MEI table exists
-            new_key = {k: v for k, v in key.items() if k not in ["method_fn", "method_hash"]}
-            method_fns, method_hashs, method_configs, scores = (self.method_table * self & new_key).fetch(
-                "method_fn", "method_hash", "method_config", "score"
+
+        # Find other existing MEIs/CEIs for the current key
+        new_key = {k: v for k, v in key.items() if k not in ["method_fn", "method_hash"]}
+        table = self.method_table * self & new_key
+
+        if len(table) != 0:
+            method_fns, method_hashs, method_configs, means, variances, mei_paths = table.fetch(
+                "method_fn", "method_hash", "method_config", "mean", "variance", "mei"
             )
-            # Get the scores of the entries for which an "MEI" was optimized
-            mei_scores = [
-                score
-                for method_config, score in zip(method_configs, scores)
-                if method_config.get("mei_class_name", "MEI") == "MEI"
-            ]
-            model.mei_score = max(mei_scores)
+            meis = []
+            for mei_path in mei_paths:
+                meis.append(torch.load(mei_path))
+                os.remove(mei_path)
+            meis = np.stack(meis)
+
+            # Find which indices are for MEIs and CEIs
+            idx_mei = np.where([config.get("mei_class_name", "MEI") == "MEI" for config in method_configs])[0]
+            idx_cei = np.where([config.get("mei_class_name", "MEI") == "CEI" for config in method_configs])[0]
+
+            # If there are MEI entries: add mean, variance and MEI of the max MEI to the model
+            if len(idx_mei) != 0:
+                max_mei_idx = np.argmax(means[idx_mei])
+                model.mei_mean = means[idx_mei][max_mei_idx]
+                model.mei_variance = variances[idx_mei][max_mei_idx]
+                model.mei = meis[idx_mei][max_mei_idx]
+
+            # If there are CEI entries: add all CEIs to the model with their respective rev_level
+            if len(idx_cei) != 0:
+                model.cei = {}
+                for cei, cei_method_config in zip(meis[idx_cei], method_configs[idx_cei]):
+                    model.cei[cei_method_config["ref_level"]] = cei
+            print("Finished adding params to model!")
 
     def _insert_mei(self, mei_entity: Dict[str, Any]) -> None:
         """Saves the MEI to a temporary directory and inserts the prepared entity into the table."""
