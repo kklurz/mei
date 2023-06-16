@@ -74,7 +74,9 @@ class MEI:
         postprocessing: Callable[[Tensor, int], Tensor] = default_postprocessing,
         background: Callable[[Tensor, int], Tensor] = default_background,
         use_wandb_every_n_epochs: int = None,
-        ref_level: int = None,  # only for VEIs
+        ref_level: int = None,  # only for VEIs and CEIs
+        scale: float = None,  # only for VEIs
+        dx: float = None,  # only for VEIs
         variance_optimization: str = None,  # only for VEIs
     ):
         """Initializes MEI.
@@ -111,6 +113,8 @@ class MEI:
         self.inhibitory = inhibitory
         self.use_wandb_every_n_epochs = use_wandb_every_n_epochs
         self.ref_level = ref_level
+        self.scale = scale
+        self.dx = dx
         self.variance_optimization = variance_optimization
 
         print(f"Using a transparency weight of {self.transparency_weight}")
@@ -206,17 +210,35 @@ class MEI:
         )
 
 
-class VEI(MEI):
+class CEI(MEI):
     def evaluate(self) -> Tensor:
-        """Evaluates the function on the current VEI."""
+        """Evaluates the function on the current CEI (Certain exciting input). This class creates an input which excites
+        the neuron to a certain percentage (ref_level) of the MEI"""
         _, mean, variance = super().evaluate()
 
-        diff = self.ref_level - mean / self.func.mei_score
+        diff = self.ref_level - mean / self.func.mei_mean
+        objective = -(diff**2)
+        return objective, mean, variance
+
+
+class VEI(MEI):
+    def potential_well(self, mean):
+        x = mean / self.func.mei_mean
+        out = torch.exp(-self.scale * (x + self.dx - self.ref_level)) + torch.exp(
+            self.scale * (x - self.dx - self.ref_level)
+        )
+        return out
+
+    def evaluate(self) -> Tensor:
+        """Evaluates the function on the current VEI (Variably exciting input)."""
+        _, mean, variance = super().evaluate()
+
+        objective = -self.potential_well(mean)
 
         if self.variance_optimization == "max":
-            objective = -(diff**2) + variance
+            objective += variance / self.func.mei_variance
         elif self.variance_optimization == "min":
-            objective = -(diff**2) - variance
+            objective -= variance / self.func.mei_variance
         else:
             raise ValueError()
         return objective, mean, variance

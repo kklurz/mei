@@ -105,6 +105,8 @@ def gradient_ascent(
             "use_wandb_every_n_epochs",
             "ref_level",
             "variance_optimization",
+            "scale",
+            "dx",
         ):
             continue
         if "kwargs" not in component_config:
@@ -129,7 +131,9 @@ def gradient_ascent(
     shape = config.get("mei_shape", get_input_dimensions(dataloaders, get_dims, data_key=data_key))
 
     create_initial_guess = import_func(config["initial"]["path"], config["initial"]["kwargs"])
-    initial_guess = create_initial_guess(n_meis, *shape[1:]).to(config["device"])  # (1*1*h*w)
+    initial_guess = create_initial_guess(n_meis, *shape[1:], model=model,).to(
+        config["device"]
+    )  # (1*1*h*w)
 
     transparency = config.get("transparency", None)
     if transparency:
@@ -157,6 +161,8 @@ def gradient_ascent(
         **optional,
         use_wandb_every_n_epochs=config.get("use_wandb_every_n_epochs", None),
         ref_level=config.get("ref_level", None),
+        scale=config.get("scale", None),
+        dx=config.get("dx", None),
         variance_optimization=config.get("variance_optimization", None),
     )
 
