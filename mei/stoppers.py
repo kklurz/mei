@@ -40,14 +40,16 @@ class NumIterations(OptimizationStopper):
 class EarlyStopping(OptimizationStopper):
     """Callable that stops the optimization process after a specified number of steps."""
 
-    def __init__(self, patience, min_iter=100):
+    def __init__(self, patience, min_iter=100, max_iter=2000):
         """Initializes NumIterations.
 
         Args:
             num_iterations: The number of optimization steps before the process is stopped.
         """
+        assert min_iter < max_iter, "min_iter must be smaller than max_iter"
         self.patience = patience
         self.min_iter = min_iter
+        self.max_iter = max_iter
         self.evaluation_value = -1.e12
         self.patience_iter = 0
         self.i_iter = 0
@@ -62,7 +64,7 @@ class EarlyStopping(OptimizationStopper):
             self.best_state = deepcopy(current_state)
         self.i_iter += 1
 
-        if self.patience_iter >= self.patience and self.i_iter >= self.min_iter:
+        if (self.patience_iter >= self.patience and self.i_iter >= self.min_iter) or self.i_iter == self.max_iter:
             print(f"Early stopping finished after {current_state.i_iter} iterations.")
             return True, None
         return False, None
