@@ -141,8 +141,11 @@ class MEI:
         """Evaluates the function on the current MEI."""
         input = self.transparentize().float() if self.transparency else self._transformed_input
 
-        mean = self.func.predict_mean(input)
-        variance = self.func.predict_variance(input)
+        behavior = torch.zeros((input.shape[0], 3)).to(input.device) if self.func.model.members[0].modulator else None
+        pupil_center = torch.zeros((input.shape[0], 2)).to(input.device) if self.func.model.members[0].shifter else None
+
+        mean = self.func.predict_mean(input, behavior=behavior, pupil_center=pupil_center)
+        variance = self.func.predict_variance(input, behavior=behavior, pupil_center=pupil_center)
         return mean, mean, variance
 
     def step(self) -> State:
