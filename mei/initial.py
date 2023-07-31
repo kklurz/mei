@@ -46,6 +46,17 @@ class RandomNormal(InitialGuessCreator):
         return self._create_random_tensor(*shape)
 
 
+class OneValue(InitialGuessCreator):
+    def __init__(self, fill_value=0.01):
+        super().__init__()
+        self.fill_value = fill_value
+    """Used to create an initial guess tensor filled with a single grey value."""
+
+    def __call__(self, *shape, **kwargs):
+        """Creates a random initial guess from which to start the MEI optimization process given a shape."""
+        return torch.ones(shape) * self.fill_value
+
+
 class RandomNormalNullChannel(InitialGuessCreator):
     """Used to create an initial guess tensor filled with values distributed according to a normal distribution."""
 
