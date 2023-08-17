@@ -172,14 +172,14 @@ class MEIMethodMixin:
         "postprocessing",
     )
 
-    def add_method(self, method_fn: str, method_config: Mapping, comment: str = "") -> None:
+    def add_method(self, method_fn: str, method_config: Mapping, comment: str = "", skip_duplicates=False) -> None:
         self.insert1(
             dict(
                 method_fn=method_fn,
                 method_hash=make_hash(method_config),
                 method_config=method_config,
-                method_comment=comment,
-            )
+                method_comment=comment,),
+            skip_duplicates=skip_duplicates
         )
 
     def generate_mei(self, dataloaders: Dataloaders, model: Module, key: Key, seed: int) -> Dict[str, Any]:
