@@ -265,9 +265,8 @@ class MEITemplateMixin:
         table = self & new_key
 
         if len(table) != 0:
-            method_fns, method_hashs, method_configs, means, variances = (self.method_table * table).fetch(
-                "method_fn", "method_hash", "method_config", "mean", "variance")
-            meis = np.stack(table.load_mei())
+            method_fns, method_hashs, method_configs, means, variances, meis = table.load_data([
+                "method_fn", "method_hash", "method_config", "mean", "variance", "mei"])
 
             # Find which indices are for MEIs and CEIs
             idx_mei = np.where([config.get("mei_class_name", "MEI") == "MEI" for config in method_configs])[0]
@@ -313,5 +312,6 @@ class MEITemplateMixin:
     def _create_random_filename(length: Optional[int] = 32) -> str:
         return "".join(choice(ascii_letters) for _ in range(length))
 
-    def load_mei(self, *args, **kwargs):
+    def load_data(self, *args, **kwargs):
         raise NotImplementedError()
+
