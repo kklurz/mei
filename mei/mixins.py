@@ -262,17 +262,12 @@ class MEITemplateMixin:
     def add_params_to_model(self, model, key):
         # Find other existing MEIs/CEIs for the current key
         new_key = {k: v for k, v in key.items() if k not in ["method_fn", "method_hash"]}
-        table = self.method_table * self & new_key
+        table = self & new_key
 
         if len(table) != 0:
-            method_fns, method_hashs, method_configs, means, variances, mei_paths = table.fetch(
-                "method_fn", "method_hash", "method_config", "mean", "variance", "mei", download_path='/project/notebooks/data'
-            )
-            meis = []
-            for mei_path in mei_paths:
-                meis.append(torch.load(mei_path))
-                os.remove(mei_path)
-            meis = np.stack(meis)
+            method_fns, method_hashs, method_configs, means, variances = (self.method_table * table).fetch(
+                "method_fn", "method_hash", "method_config", "mean", "variance")
+            meis = np.stack(table.load_mei())
 
             # Find which indices are for MEIs and CEIs
             idx_mei = np.where([config.get("mei_class_name", "MEI") == "MEI" for config in method_configs])[0]
@@ -317,3 +312,6 @@ class MEITemplateMixin:
     @staticmethod
     def _create_random_filename(length: Optional[int] = 32) -> str:
         return "".join(choice(ascii_letters) for _ in range(length))
+
+    def load_mei(self, *args, **kwargs):
+        raise NotImplementedError()
