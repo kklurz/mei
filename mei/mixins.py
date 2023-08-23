@@ -260,14 +260,13 @@ class MEITemplateMixin:
         self._insert_mei(mei_entity)
 
     def add_params_to_model(self, model, key):
-
         # Find other existing MEIs/CEIs for the current key
         new_key = {k: v for k, v in key.items() if k not in ["method_fn", "method_hash"]}
         table = self.method_table * self & new_key
 
         if len(table) != 0:
             method_fns, method_hashs, method_configs, means, variances, mei_paths = table.fetch(
-                "method_fn", "method_hash", "method_config", "mean", "variance", "mei"
+                "method_fn", "method_hash", "method_config", "mean", "variance", "mei", download_path='/project/notebooks/data'
             )
             meis = []
             for mei_path in mei_paths:
