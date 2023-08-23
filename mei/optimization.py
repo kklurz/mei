@@ -171,6 +171,8 @@ class MEI:
             reg_term = self.regularization(self._transformed_input, self.i_iteration)
             (-evaluation + reg_term).backward()
 
+        if self.func.zero_grad_mask is not None:
+            self._current_input.grad[self.func.zero_grad_mask] = 0
         state["reg_term"] = reg_term.item()
 
         if self._current_input.grad is None:

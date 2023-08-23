@@ -290,7 +290,15 @@ class MEITemplateMixin:
             if len(idx_cei) != 0:
                 model.cei = {}
                 for cei, cei_method_config in zip(meis[idx_cei], method_configs[idx_cei]):
-                    model.cei[cei_method_config["ref_level"]] = cei
+                    ref_level = cei_method_config["ref_level"]
+                    try:
+                        l1 = cei_method_config["regularization"]["path"] == 'mei.legacy.ops.L1Norm'
+                        l1 = cei_method_config["regularization"]["kwargs"]["weight"] if l1 else "no_l1"
+                    except KeyError:
+                        l1 = "no_l1"
+                    if ref_level not in model.cei:
+                        model.cei[ref_level] = {}
+                    model.cei[ref_level][l1] = cei
             print("Finished adding params to model!")
 
     def _insert_mei(self, mei_entity: Dict[str, Any]) -> None:
