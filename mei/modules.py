@@ -93,6 +93,7 @@ class ConstrainedOutputModel(Module):
         self.constraint = constraint if (isinstance(constraint, Iterable) or constraint is None) else [constraint]
         self.forward_kwargs = forward_kwargs if forward_kwargs else dict()
         self.target_fn = target_fn
+        self.eval()
 
     def __call__(self, x: Tensor, *args, **kwargs) -> Tensor:
         """Computes the constrained output of the model.

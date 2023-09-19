@@ -51,9 +51,9 @@ class TrainedEnsembleModelTemplateMixin:
     fetch1: Callable
 
     def create_ensemble(self, key: Key, comment: str = "", skip_duplicates=False) -> None:
-        if len(self.dataset_table() & key) != 1:
+        if len(self.dataset_table() & (self.trained_model_table & key)) != 1:
             raise ValueError("Provided key not sufficient to restrict dataset table to one entry!")
-        dataset_key = (self.dataset_table().proj() & key).fetch1()
+        dataset_key = (self.dataset_table().proj() & (self.trained_model_table & key)).fetch1()
         models = (self.trained_model_table().proj() & key).fetch(as_dict=True)
         primary_key = dict(dataset_key, ensemble_hash=integration.hash_list_of_dictionaries(models))
         self.insert1(dict(primary_key, ensemble_comment=comment), skip_duplicates=skip_duplicates)
@@ -178,8 +178,9 @@ class MEIMethodMixin:
                 method_fn=method_fn,
                 method_hash=make_hash(method_config),
                 method_config=method_config,
-                method_comment=comment,),
-            skip_duplicates=skip_duplicates
+                method_comment=comment,
+            ),
+            skip_duplicates=skip_duplicates,
         )
 
     def generate_mei(self, dataloaders: Dataloaders, model: Module, key: Key, seed: int) -> Dict[str, Any]:
@@ -265,8 +266,9 @@ class MEITemplateMixin:
         table = self & new_key
 
         if len(table) != 0:
-            method_fns, method_hashs, method_configs, means, variances, meis = table.load_data([
-                "method_fn", "method_hash", "method_config", "mean", "variance", "mei"])
+            method_fns, method_hashs, method_configs, means, variances, meis = table.load_data(
+                ["method_fn", "method_hash", "method_config", "mean", "variance", "mei"]
+            )
 
             # Find which indices are for MEIs and CEIs
             idx_mei = np.where([config.get("mei_class_name", "MEI") == "MEI" for config in method_configs])[0]
@@ -285,7 +287,7 @@ class MEITemplateMixin:
                 for cei, cei_method_config in zip(meis[idx_cei], method_configs[idx_cei]):
                     ref_level = cei_method_config["ref_level"]
                     try:
-                        l1 = cei_method_config["regularization"]["path"] == 'mei.legacy.ops.L1Norm'
+                        l1 = cei_method_config["regularization"]["path"] == "mei.legacy.ops.L1Norm"
                         l1 = cei_method_config["regularization"]["kwargs"]["weight"] if l1 else "no_l1"
                     except KeyError:
                         l1 = "no_l1"
@@ -314,4 +316,3 @@ class MEITemplateMixin:
 
     def load_data(self, *args, **kwargs):
         raise NotImplementedError()
-
