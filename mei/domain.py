@@ -21,14 +21,14 @@ class Input:
 
     @property
     def pixel_tanh_scale(self) -> Tensor:
-        return 2 * torch.sigmoid(self.pixel_tanh_scale_) + 1.e-10  # between [0, 2]
+        return 3 * torch.sigmoid(self.pixel_tanh_scale_) + 1.e-10  # between [0, 3]
 
     @property
     def tensor(self) -> Tensor:
         if self.pixel_tanh_scale_ is False:
             return self._tensor
         else:
-            return torch.tanh(self._tensor) * self.pixel_tanh_scale
+            return (2 * torch.tanh(self._tensor) - 1) * self.pixel_tanh_scale  # between [-pixel_tanh_scale, pixel_tanh_scale]
 
     @property
     def grad(self) -> Tensor:
