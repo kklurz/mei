@@ -57,6 +57,13 @@ class EvaluationObjective(RegularIntervalObjective):
         return current_state.evaluation
 
 
+class PixelTanhScaleObjective(RegularIntervalObjective):
+    """Objective used to track the function evaluation during the optimization process."""
+
+    def compute(self, current_state: State) -> Any:
+        return current_state.pixel_tanh_scale
+
+
 class PostProcessedInputObjective(RegularIntervalObjective):
     """Objective used to track the post-processed input to the function during the optimization process"""
 

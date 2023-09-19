@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from torch import Tensor
-
+import torch
 
 class Input:
     """Domain model representing the input to a model.
@@ -13,18 +13,30 @@ class Input:
         tensor: A PyTorch tensor containing floats.
     """
 
-    def __init__(self, tensor: Tensor):
+    def __init__(self, tensor: Tensor, pixel_tanh_scale=False):
         """Initializes Input."""
-        self.tensor = tensor
-        self.tensor.requires_grad_()
+        self._tensor = tensor
+        self._tensor.requires_grad_()
+        self.pixel_tanh_scale_ = pixel_tanh_scale
+
+    @property
+    def pixel_tanh_scale(self) -> Tensor:
+        return 2 * torch.sigmoid(self.pixel_tanh_scale_) + 1.e-10  # between [0, 2]
+
+    @property
+    def tensor(self) -> Tensor:
+        if self.pixel_tanh_scale_ is False:
+            return self._tensor
+        else:
+            return torch.tanh(self._tensor) * self.pixel_tanh_scale
 
     @property
     def grad(self) -> Tensor:
-        return self.tensor.grad
+        return self._tensor.grad
 
     @grad.setter
     def grad(self, value: Tensor):
-        self.tensor.grad = value
+        self._tensor.grad = value
 
     @property
     def cloned_grad(self) -> Tensor:
@@ -87,6 +99,7 @@ class State:
         mean: Tensor,
         variance: Tensor,
         stopper_output: Optional[Any] = None,
+        pixel_tanh_scale=False,
     ):
         self.i_iter = i_iter
         self.evaluation = evaluation
@@ -100,6 +113,7 @@ class State:
         self.mean = mean
         self.variance = variance
         self.stopper_output = stopper_output
+        self.pixel_tanh_scale = pixel_tanh_scale
 
     def __repr__(self) -> str:
         return f"{self.__class__.__qualname__}({', '.join(repr(v) for v in self.to_dict().values())})"
@@ -119,6 +133,7 @@ class State:
             mean=self.mean,
             variance=self.variance,
             stopper_output=self.stopper_output,
+            pixel_tanh_scale=self.pixel_tanh_scale,
         )
 
     def __eq__(self, other: State) -> bool:

@@ -78,6 +78,7 @@ class MEI:
         scale: float = None,  # only for VEIs
         dx: float = None,  # only for VEIs
         variance_optimization: str = None,  # only for VEIs
+        pixel_tanh_scale=False,  # Pass the optimized image through a scaled tanh to achieve man and min pixel values
     ):
         """Initializes MEI.
 
@@ -96,7 +97,7 @@ class MEI:
                 parameters and that should return a post-processed MEI. The operation performed by this callable on the
                 MEI has no influence on its gradient.
         """
-        initial = self.input_cls(initial)
+        initial = self.input_cls(initial, pixel_tanh_scale=pixel_tanh_scale)
         self.func = func
         self.initial = initial.clone()
         self.optimizer = optimizer
@@ -116,8 +117,10 @@ class MEI:
         self.scale = scale
         self.dx = dx
         self.variance_optimization = variance_optimization
+        self.pixel_tanh_scale_ = pixel_tanh_scale
 
         print(f"Using a transparency weight of {self.transparency_weight}")
+
 
     @property
     def _transformed_input(self) -> Tensor:
@@ -154,29 +157,40 @@ class MEI:
         self.optimizer.zero_grad()
         objective, mean, variance = self.evaluate()
         evaluation = objective * (self.inhibitory != True) + objective * (self.inhibitory == True) * (-1)
-        # print('eval 1 ',evaluation.item())
+        assert not (torch.isinf(evaluation).any() or torch.isnan(evaluation).any()), "nan or inf value encountered"
+
         state["evaluation"] = evaluation.item()
         state["mean"] = mean.item()
         state["variance"] = variance.item()
 
         state["transformed_input"] = self._transformed_input.data.cpu().clone()  ### may need to change
 
+        scale_reg_term = 0
+        if not self.pixel_tanh_scale_ is False:
+            state["pixel_tanh_scale"] = self._current_input.pixel_tanh_scale.item()
+            if self.pixel_tanh_scale_.requires_grad:
+                power_evaluation = torch.floor((torch.log10(torch.abs(evaluation)))).item()
+                power_reg_term = torch.floor((torch.log10(torch.abs(self._current_input.pixel_tanh_scale)))).item()
+                scale_reg_term = self._current_input.pixel_tanh_scale * 10**(power_evaluation - power_reg_term -1)
+                assert not (torch.isinf(scale_reg_term).any() or torch.isnan(scale_reg_term).any()), "nan or inf value encountered"
+
         if self.transparency:
             mean_alpha_value = self.mean_alpha_value()
-            reg_term = self.regularization(mean_alpha_value, self.i_iteration)
+            reg_term = self.regularization(mean_alpha_value, self.i_iteration) + scale_reg_term
             (
                 (-evaluation + reg_term) * (1 - mean_alpha_value * self.transparency_weight)
             ).backward()  ### add transparency to objective; mean_alpha_value here should be a function?
         else:
-            reg_term = self.regularization(self._transformed_input, self.i_iteration)
+            reg_term = self.regularization(self._transformed_input, self.i_iteration) + scale_reg_term
+
             (-evaluation + reg_term).backward()
+
+        if self._current_input.grad is None:
+            raise RuntimeError("Gradient did not reach MEI")
 
         if hasattr(self.func, "zero_grad_mask"):
             self._current_input.grad[self.func.zero_grad_mask] = 0
         state["reg_term"] = reg_term.item()
-
-        if self._current_input.grad is None:
-            raise RuntimeError("Gradient did not reach MEI")
 
         state["grad"] = self._current_input.cloned_grad
         self._current_input.grad = self.precondition(self._current_input.grad, self.i_iteration)
@@ -204,7 +218,6 @@ class MEI:
 
         self._transformed = None
         self.i_iteration += 1
-
         return self.state_cls.from_dict(state)
 
     def __repr__(self) -> str:

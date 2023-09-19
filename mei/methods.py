@@ -107,6 +107,7 @@ def gradient_ascent(
             "variance_optimization",
             "scale",
             "dx",
+            "pixel_tanh_scale"
         ):
             continue
         if "kwargs" not in component_config:
@@ -143,10 +144,24 @@ def gradient_ascent(
     transparency_weight = config.get("transparency_weight", 1.0)
     inhibitory = config.get("inhibitory", None)
 
-    optimizer = import_func(config["optimizer"]["path"], dict(params=[initial_guess], **config["optimizer"]["kwargs"]))
+    pixel_tanh_scale = config.get("pixel_tanh_scale", False)
+    if not pixel_tanh_scale is False:
+        if isinstance(pixel_tanh_scale, bool):
+            pixel_tanh_scale = torch.tensor([0.], requires_grad=True, device=config["device"])
+            params = [initial_guess, pixel_tanh_scale]
+        else:
+            pixel_tanh_scale = torch.tensor([pixel_tanh_scale], requires_grad=False, device=config["device"])
+            params = [initial_guess]
+        print("pixel_tanh_scale is set!")
+    else:
+        params = [initial_guess]
+    optimizer = import_func(config["optimizer"]["path"], dict(params=params, **config["optimizer"]["kwargs"]))
     stopper = import_func(config["stopper"]["path"], config["stopper"]["kwargs"])
 
     objectives = {o["path"]: import_func(o["path"], o["kwargs"]) for o in config["objectives"]}
+    if not pixel_tanh_scale is False:
+        path = 'mei.objectives.PixelTanhScaleObjective'
+        objectives[path] = import_func(path, {'interval': 10})
     tracker = tracker_cls(**objectives)
 
     optional_names = ("transform", "regularization", "precondition", "postprocessing", "background")
@@ -164,6 +179,7 @@ def gradient_ascent(
         scale=config.get("scale", None),
         dx=config.get("dx", None),
         variance_optimization=config.get("variance_optimization", None),
+        pixel_tanh_scale=pixel_tanh_scale,
     )
 
     final_evaluation, mei, mean, variance = optimize_func(mei, stopper, tracker)
