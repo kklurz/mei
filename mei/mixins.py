@@ -285,6 +285,8 @@ class MEITemplateMixin:
             if len(idx_cei) != 0:
                 model.cei = {}
                 for cei, cei_method_config in zip(meis[idx_cei], method_configs[idx_cei]):
+                    if cei_method_config["initial"]["path"] == 'mei.initial.ImageLoader':
+                        continue
                     ref_level = cei_method_config["ref_level"]
                     try:
                         l1 = cei_method_config["regularization"]["path"] == "mei.legacy.ops.L1Norm"
