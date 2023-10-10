@@ -107,7 +107,8 @@ def gradient_ascent(
             "variance_optimization",
             "scale",
             "dx",
-            "pixel_tanh_scale"
+            "pixel_tanh_scale",
+            "orthogonal_vei"
         ):
             continue
         if "kwargs" not in component_config:
@@ -150,7 +151,7 @@ def gradient_ascent(
             pixel_tanh_scale = torch.tensor([0.], requires_grad=True, device=config["device"])
             params = [initial_guess, pixel_tanh_scale]
         else:
-            pixel_tanh_scale = torch.tensor([pixel_tanh_scale], requires_grad=False, device=config["device"])
+            pixel_tanh_scale = torch.tensor([pixel_tanh_scale], requires_grad=False, device=config["device"]).float()
             params = [initial_guess]
         print("pixel_tanh_scale is set!")
     else:
@@ -166,6 +167,19 @@ def gradient_ascent(
 
     optional_names = ("transform", "regularization", "precondition", "postprocessing", "background")
     optional = {n: import_func(config[n]["path"], config[n]["kwargs"]) for n in optional_names if n in config}
+
+    if config.get("orthogonal_vei", False):
+        if config["orthogonal_vei"]["mei_type"] == "MEI":
+            reference_mei = model.mei
+        else:
+            ref_level = config["orthogonal_vei"]["ref_level"]
+            l1 = config["orthogonal_vei"]["l1"]
+            reference_mei = model.cei[ref_level][l1]
+        reference_mei = torch.from_numpy(reference_mei).to(config["device"])
+        print("reference_mei set!")
+    else:
+        reference_mei = None
+
     mei = mei_class(
         model,
         initial=initial_guess,
@@ -180,6 +194,7 @@ def gradient_ascent(
         dx=config.get("dx", None),
         variance_optimization=config.get("variance_optimization", None),
         pixel_tanh_scale=pixel_tanh_scale,
+        reference_mei=reference_mei,
     )
 
     final_evaluation, mei, mean, variance = optimize_func(mei, stopper, tracker)

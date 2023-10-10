@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 from torch import Tensor
 import torch
 
+
 class Input:
     """Domain model representing the input to a model.
 
@@ -13,22 +14,54 @@ class Input:
         tensor: A PyTorch tensor containing floats.
     """
 
-    def __init__(self, tensor: Tensor, pixel_tanh_scale=False):
+    def __init__(self, tensor: Tensor, reference_mei=None, pixel_tanh_scale=False):
         """Initializes Input."""
         self._tensor = tensor
         self._tensor.requires_grad_()
         self.pixel_tanh_scale_ = pixel_tanh_scale
+        self.reference_mei = reference_mei
 
     @property
     def pixel_tanh_scale(self) -> Tensor:
-        return 3 * torch.sigmoid(self.pixel_tanh_scale_) + 1.e-10  # between [0, 3]
+        return 3 * torch.sigmoid(self.pixel_tanh_scale_) + 1.0e-10  # between [0, 3]
 
     @property
     def tensor(self) -> Tensor:
         if self.pixel_tanh_scale_ is False:
-            return self._tensor
+            if self.reference_mei is not None:
+                assert self._tensor.shape[0] == 1, "currently not implemented for multiple-mei generation"
+                v_mu = self.reference_mei.reshape(-1)
+                v_tilde = self._tensor.reshape(-1)
+
+                projection = (
+                    (v_tilde * v_mu).sum() / torch.norm(v_mu) ** 2
+                ) * v_mu
+                delta_v = v_tilde - projection
+                out = v_mu + delta_v
+
+
+                import numpy as np
+                def angle(u, v):
+                    u = u.cpu().data.numpy()
+                    v = v.cpu().data.numpy()
+
+                    nominator = (u*v).sum()
+                    denominator = np.linalg.norm(u)*np.linalg.norm(v)
+                    return np.arccos(nominator/denominator)
+                assert np.degrees(angle(v_mu, delta_v)).round(1) == 90.
+
+
+
+
+                out = out.reshape(self._tensor.shape)
+            else:
+                out = self._tensor
+            return out
         else:
-            return (2 * torch.tanh(self._tensor) - 1) * self.pixel_tanh_scale  # between [-pixel_tanh_scale, pixel_tanh_scale]
+            assert self.reference_mei is None, "pixel_tanh_scale can not be set with reference_mei"
+            return (
+                2 * torch.tanh(self._tensor) - 1
+            ) * self.pixel_tanh_scale  # between [-pixel_tanh_scale, pixel_tanh_scale]
 
     @property
     def grad(self) -> Tensor:
@@ -91,8 +124,8 @@ class State:
         reg_term: float,
         input_: Tensor,
         transformed_input: Tensor,
-        #transparent_input: Tensor,
-        #mean_alpha_value: Tensor,
+        # transparent_input: Tensor,
+        # mean_alpha_value: Tensor,
         post_processed_input: Tensor,
         grad: Tensor,
         preconditioned_grad: Tensor,
@@ -106,7 +139,7 @@ class State:
         self.reg_term = reg_term
         self.input = input_
         self.transformed_input = transformed_input
-        #self.mean_alpha_value = mean_alpha_value
+        # self.mean_alpha_value = mean_alpha_value
         self.post_processed_input = post_processed_input
         self.grad = grad
         self.preconditioned_grad = preconditioned_grad

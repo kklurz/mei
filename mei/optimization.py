@@ -79,6 +79,7 @@ class MEI:
         dx: float = None,  # only for VEIs
         variance_optimization: str = None,  # only for VEIs
         pixel_tanh_scale=False,  # Pass the optimized image through a scaled tanh to achieve man and min pixel values
+        reference_mei=None,
     ):
         """Initializes MEI.
 
@@ -97,7 +98,7 @@ class MEI:
                 parameters and that should return a post-processed MEI. The operation performed by this callable on the
                 MEI has no influence on its gradient.
         """
-        initial = self.input_cls(initial, pixel_tanh_scale=pixel_tanh_scale)
+        initial = self.input_cls(initial, reference_mei=reference_mei, pixel_tanh_scale=pixel_tanh_scale)
         self.func = func
         self.initial = initial.clone()
         self.optimizer = optimizer
@@ -118,6 +119,8 @@ class MEI:
         self.dx = dx
         self.variance_optimization = variance_optimization
         self.pixel_tanh_scale_ = pixel_tanh_scale
+        self.reference_mei = reference_mei
+
 
         print(f"Using a transparency weight of {self.transparency_weight}")
 
@@ -219,6 +222,15 @@ class MEI:
         self._transformed = None
         self.i_iteration += 1
         return self.state_cls.from_dict(state)
+
+    def angle(self, u, v):
+        import numpy as np
+        u = u.cpu().data.numpy().reshape(-1)
+        v = v.cpu().data.numpy().reshape(-1)
+
+        nominator = (u*v).sum()
+        denominator = np.linalg.norm(u)*np.linalg.norm(v)
+        return np.degrees(np.arccos(nominator/denominator)).round(1)
 
     def __repr__(self) -> str:
         return (
