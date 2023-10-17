@@ -80,6 +80,7 @@ class MEI:
         variance_optimization: str = None,  # only for VEIs
         pixel_tanh_scale=False,  # Pass the optimized image through a scaled tanh to achieve man and min pixel values
         reference_mei=None,
+        potential_well_function=None,
     ):
         """Initializes MEI.
 
@@ -120,10 +121,9 @@ class MEI:
         self.variance_optimization = variance_optimization
         self.pixel_tanh_scale_ = pixel_tanh_scale
         self.reference_mei = reference_mei
-
+        self.potential_well_function = potential_well_function
 
         print(f"Using a transparency weight of {self.transparency_weight}")
-
 
     @property
     def _transformed_input(self) -> Tensor:
@@ -160,12 +160,11 @@ class MEI:
         self.optimizer.zero_grad()
         objective, mean, variance = self.evaluate()
         evaluation = objective * (self.inhibitory != True) + objective * (self.inhibitory == True) * (-1)
-        assert not (torch.isinf(evaluation).any() or torch.isnan(evaluation).any()), "nan or inf value encountered"
+        assert not (
+            torch.isinf(evaluation).any() or torch.isnan(evaluation).any()
+        ), f"nan or inf value encountered, iteration={self.i_iteration}"
 
         state["evaluation"] = evaluation.item()
-        state["mean"] = mean.item()
-        state["variance"] = variance.item()
-
         state["transformed_input"] = self._transformed_input.data.cpu().clone()  ### may need to change
 
         scale_reg_term = 0
@@ -174,8 +173,10 @@ class MEI:
             if self.pixel_tanh_scale_.requires_grad:
                 power_evaluation = torch.floor((torch.log10(torch.abs(evaluation)))).item()
                 power_reg_term = torch.floor((torch.log10(torch.abs(self._current_input.pixel_tanh_scale)))).item()
-                scale_reg_term = self._current_input.pixel_tanh_scale * 10**(power_evaluation - power_reg_term -1)
-                assert not (torch.isinf(scale_reg_term).any() or torch.isnan(scale_reg_term).any()), "nan or inf value encountered"
+                scale_reg_term = self._current_input.pixel_tanh_scale * 10 ** (power_evaluation - power_reg_term - 1)
+                assert not (
+                    torch.isinf(scale_reg_term).any() or torch.isnan(scale_reg_term).any()
+                ), f"nan or inf value encountered, iteration={self.i_iteration}"
 
         if self.transparency:
             mean_alpha_value = self.mean_alpha_value()
@@ -204,6 +205,9 @@ class MEI:
         # post process new mei after optimization
         self._current_input.data = self.postprocessing(self._current_input.data, self.i_iteration)
         state["post_processed_input"] = self._current_input.cloned_data
+        _, mean, variance = self.evaluate()
+        state["mean"] = mean.item()
+        state["variance"] = variance.item()
 
         if self.use_wandb_every_n_epochs is not None and self.i_iteration % self.use_wandb_every_n_epochs == 0:
             fig, ax = plt.subplots(1, 1)
@@ -225,12 +229,13 @@ class MEI:
 
     def angle(self, u, v):
         import numpy as np
+
         u = u.cpu().data.numpy().reshape(-1)
         v = v.cpu().data.numpy().reshape(-1)
 
-        nominator = (u*v).sum()
-        denominator = np.linalg.norm(u)*np.linalg.norm(v)
-        return np.degrees(np.arccos(nominator/denominator)).round(1)
+        nominator = (u * v).sum()
+        denominator = np.linalg.norm(u) * np.linalg.norm(v)
+        return np.degrees(np.arccos(nominator / denominator)).round(1)
 
     def __repr__(self) -> str:
         return (
@@ -252,18 +257,31 @@ class CEI(MEI):
 
 
 class VEI(MEI):
-    def potential_well(self, mean):
+    def exp_potential_well(self, mean):
         x = mean / self.func.mei_mean
         out = torch.exp(-self.scale * (x + self.dx - self.ref_level)) + torch.exp(
             self.scale * (x - self.dx - self.ref_level)
         )
         return out
 
+    def linear_potential_well(self, mean):
+        x = mean / self.func.mei_mean
+        if self.ref_level - self.dx < x < self.ref_level + self.dx:
+            out = 0
+        else:
+            out = torch.abs(x - self.ref_level) * self.scale
+        return out
+
     def evaluate(self) -> Tensor:
         """Evaluates the function on the current VEI (Variably exciting input)."""
         _, mean, variance = super().evaluate()
 
-        objective = -self.potential_well(mean)
+        if self.potential_well_function == "exp":
+            objective = -self.exp_potential_well(mean)
+        elif self.potential_well_function == "linear":
+            objective = -self.linear_potential_well(mean)
+        else:
+            raise ValueError()
 
         if self.variance_optimization == "max":
             objective += variance / self.func.mei_variance
@@ -271,6 +289,7 @@ class VEI(MEI):
             objective -= variance / self.func.mei_variance
         else:
             raise ValueError()
+        assert not abs(objective.item()) > 1.e5, "very big objective, iteration: {}".format(self.i_iteration)
         return objective, mean, variance
 
 

@@ -108,7 +108,8 @@ def gradient_ascent(
             "scale",
             "dx",
             "pixel_tanh_scale",
-            "orthogonal_vei"
+            "orthogonal_vei",
+            "potential_well_function"
         ):
             continue
         if "kwargs" not in component_config:
@@ -195,6 +196,7 @@ def gradient_ascent(
         variance_optimization=config.get("variance_optimization", None),
         pixel_tanh_scale=pixel_tanh_scale,
         reference_mei=reference_mei,
+        potential_well_function=config.get("potential_well_function", None),
     )
 
     final_evaluation, mei, mean, variance = optimize_func(mei, stopper, tracker)
