@@ -266,10 +266,7 @@ class VEI(MEI):
 
     def linear_potential_well(self, mean):
         x = mean / self.func.mei_mean
-        if self.ref_level - self.dx < x < self.ref_level + self.dx:
-            out = 0
-        else:
-            out = torch.abs(x - self.ref_level) * self.scale
+        out = self.scale*.5*(x - self.ref_level)*(torch.erf((x - self.ref_level)/np.sqrt(2)/self.dx))
         return out
 
     def evaluate(self) -> Tensor:
