@@ -33,6 +33,8 @@ def gradient_ascent(
     import_func: Callable = import_object,
     optimize_func: Callable = optimization.optimize,
     tracker_cls: Type[Tracker] = Tracker,
+    validation_func = None,
+    test_func = None,
 ) -> Tuple[Tensor, float, Dict]:
     """Generates a MEI using gradient ascent.
 
@@ -109,7 +111,9 @@ def gradient_ascent(
             "dx",
             "pixel_tanh_scale",
             "orthogonal_vei",
-            "potential_well_function"
+            "potential_well_function",
+            "validation_ensemble",
+            "test_ensemble",
         ):
             continue
         if "kwargs" not in component_config:
@@ -197,6 +201,8 @@ def gradient_ascent(
         pixel_tanh_scale=pixel_tanh_scale,
         reference_mei=reference_mei,
         potential_well_function=config.get("potential_well_function", None),
+        validation_func=validation_func,
+        test_func=test_func,
     )
 
     final_evaluation, mei, mean, variance = optimize_func(mei, stopper, tracker)

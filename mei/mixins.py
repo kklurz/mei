@@ -6,6 +6,7 @@ import tempfile
 from typing import Callable, Iterable, Mapping, Optional, Tuple, Dict, Any
 from string import ascii_letters
 from random import choice
+from copy import deepcopy
 
 import torch
 import numpy as np
@@ -183,7 +184,7 @@ class MEIMethodMixin:
             skip_duplicates=skip_duplicates,
         )
 
-    def generate_mei(self, dataloaders: Dataloaders, model: Module, key: Key, seed: int) -> Dict[str, Any]:
+    def generate_mei(self, dataloaders: Dataloaders, model: Module, key: Key, seed: int, validation_func, test_func) -> Dict[str, Any]:
         method_fn, method_config = (self & key).fetch1("method_fn", "method_config")
         method_fn = self.import_func(method_fn)
         self.insert_key_in_ops(method_config=method_config, key=key)
@@ -196,7 +197,15 @@ class MEIMethodMixin:
             mei_class = optimization.CEI
         else:
             raise ValueError(f"mei_class_name '{mei_class_name}' not recognized")
-        mei, score, output, mean, variance = method_fn(dataloaders, model, method_config, seed, mei_class=mei_class)
+        mei, score, output, mean, variance = method_fn(
+            dataloaders,
+            model,
+            method_config,
+            seed,
+            mei_class=mei_class,
+            validation_func=validation_func,
+            test_func=test_func,
+        )
         return dict(key, mei=mei, score=score, output=output, mean=mean, variance=variance)
 
     def generate_ringmei(
@@ -250,17 +259,44 @@ class MEITemplateMixin:
         super().__init__(*args, **kwargs)
         self.model_loader = self.model_loader_class(self.trained_model_table, cache_size_limit=cache_size_limit)
 
-    def make(self, key: Key, return_before_inserting=False) -> None:
+    def get_model(self, key):
         dataloaders, model = self.model_loader.load(key=key)
         seed = (self.seed_table() & key).fetch1("mei_seed")
         output_selected_model = self.selector_table().get_output_selected_model(model, key)
-        self.add_params_to_model(output_selected_model, key)
-        mei_entity = self.method_table().generate_mei(dataloaders, output_selected_model, key, seed)
+        model.eval()
+        return dataloaders, output_selected_model, seed
+
+    def make(self, key: Key, return_before_inserting=False) -> None:
+        dataloaders, train_model, seed = self.get_model(key)
+        models = [train_model]
+        config = (self.method_table() & key).fetch1("method_config")
+        device = config["device"]
+        validation_model, test_model = None, None
+        if 'validation_ensemble' in config:
+            new_key = deepcopy(key)
+            new_key["ensemble_hash"] = config["validation_ensemble"]
+            _, validation_model, _ = self.get_model(new_key)
+            validation_model.to(device)
+            models.append(validation_model)
+            print("Validation model used...")
+        if 'test_ensemble' in config:
+            new_key = deepcopy(key)
+            new_key["ensemble_hash"] = config["test_ensemble"]
+            _, test_model, _ = self.get_model(new_key)
+            test_model.to(device)
+            models.append(test_model)
+            print("Test model used...")
+
+        self.add_params_to_model(models, key)
+        mei_entity = self.method_table().generate_mei(dataloaders, train_model, key, seed, validation_model, test_model)
         if return_before_inserting:
-            return mei_entity
+            return mei_entity, train_model
         self._insert_mei(mei_entity)
 
-    def add_params_to_model(self, model, key):
+    def add_params_to_model(self, models, key):
+        original_method_config = (self.method_table() & key).fetch1("method_config")
+        device = original_method_config["device"]
+
         # Find other existing MEIs/CEIs for the current key
         new_key = {k: v for k, v in key.items() if k not in ["method_fn", "method_hash"]}
         table = self & new_key
@@ -274,38 +310,42 @@ class MEITemplateMixin:
             idx_mei = np.where([config.get("mei_class_name", "MEI") == "MEI" for config in method_configs])[0]
             idx_cei = np.where([config.get("mei_class_name", "MEI") == "CEI" for config in method_configs])[0]
 
-            # If there are MEI entries: add mean, variance and MEI of the max MEI to the model
-            if len(idx_mei) != 0:
-                max_mei_idx = np.argmax(means[idx_mei])
-                model.mei_mean = means[idx_mei][max_mei_idx]
-                model.mei_variance = variances[idx_mei][max_mei_idx]
-                model.mei = meis[idx_mei][max_mei_idx]
+            for model in models:
+                model.eval()
+                model.to(device)
+                # If there are MEI entries: add mean, variance and MEI of the max MEI to the model
+                if len(idx_mei) != 0:
+                    max_mei_idx = np.argmax(means[idx_mei])
+                    model.mei = meis[idx_mei][max_mei_idx]
 
-            # If there are CEI entries: add all CEIs to the model with their respective rev_level
-            if len(idx_cei) != 0:
-                model.cei = {}
-                for cei, cei_method_config in zip(meis[idx_cei], method_configs[idx_cei]):
-                    original_method_config = (self.method_table() & key).fetch1("method_config")
-                    image_loader = False
-                    if original_method_config["initial"]["path"] == 'mei.initial.ImageLoader':
-                        if original_method_config["initial"]["kwargs"]["mei_type"] == 'CEI':
-                            image_loader = True
-                    if "orthogonal_vei" in original_method_config:
-                        if original_method_config["orthogonal_vei"]["mei_type"] == 'CEI':
-                            image_loader = True
-                    if cei_method_config["initial"]["path"] == 'mei.initial.ImageLoader' or not image_loader:
-                        continue
+                    behavior = torch.zeros((model.mei.shape[0], 3)).to(device) if model.model.members[0].modulator else None
+                    pupil_center = torch.zeros((model.mei.shape[0], 2)).to(device) if model.model.members[0].shifter else None
+                    model.mei_mean = model.predict_mean(torch.from_numpy(model.mei).to(device), behavior=behavior, pupil_center=pupil_center)
+                    model.mei_variance = model.predict_variance(torch.from_numpy(model.mei).to(device), behavior=behavior, pupil_center=pupil_center)
 
+                # If there are CEI entries: add all CEIs to the model with their respective rev_level
+                if len(idx_cei) != 0:
+                    model.cei = {}
+                    for cei, cei_method_config in zip(meis[idx_cei], method_configs[idx_cei]):
+                        image_loader = False
+                        if original_method_config["initial"]["path"] == "mei.initial.ImageLoader":
+                            if original_method_config["initial"]["kwargs"]["mei_type"] == "CEI":
+                                image_loader = True
+                        if "orthogonal_vei" in original_method_config:
+                            if original_method_config["orthogonal_vei"]["mei_type"] == "CEI":
+                                image_loader = True
+                        if cei_method_config["initial"]["path"] == "mei.initial.ImageLoader" or not image_loader:
+                            continue
 
-                    ref_level = cei_method_config["ref_level"]
-                    try:
-                        l1 = cei_method_config["regularization"]["path"] == "mei.legacy.ops.L1Norm"
-                        l1 = cei_method_config["regularization"]["kwargs"]["weight"] if l1 else "no_l1"
-                    except KeyError:
-                        l1 = "no_l1"
-                    if ref_level not in model.cei:
-                        model.cei[ref_level] = {}
-                    model.cei[ref_level][l1] = cei
+                        ref_level = cei_method_config["ref_level"]
+                        try:
+                            l1 = cei_method_config["regularization"]["path"] == "mei.legacy.ops.L1Norm"
+                            l1 = cei_method_config["regularization"]["kwargs"]["weight"] if l1 else "no_l1"
+                        except KeyError:
+                            l1 = "no_l1"
+                        if ref_level not in model.cei:
+                            model.cei[ref_level] = {}
+                        model.cei[ref_level][l1] = cei
             print("Finished adding params to model!")
 
     def _insert_mei(self, mei_entity: Dict[str, Any]) -> None:

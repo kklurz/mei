@@ -81,6 +81,8 @@ class MEI:
         pixel_tanh_scale=False,  # Pass the optimized image through a scaled tanh to achieve man and min pixel values
         reference_mei=None,
         potential_well_function=None,
+        validation_func=None,
+        test_func=None,
     ):
         """Initializes MEI.
 
@@ -122,7 +124,8 @@ class MEI:
         self.pixel_tanh_scale_ = pixel_tanh_scale
         self.reference_mei = reference_mei
         self.potential_well_function = potential_well_function
-
+        self.validation_func = validation_func
+        self.test_func = test_func
         print(f"Using a transparency weight of {self.transparency_weight}")
 
     @property
@@ -143,28 +146,33 @@ class MEI:
     def mean_alpha_value(self) -> Tensor:
         return torch.mean(self._current_input.tensor[:, -1, ...])
 
-    def evaluate(self) -> Tensor:
+    def evaluate(self, model) -> Tensor:
         """Evaluates the function on the current MEI."""
         input = self.transparentize().float() if self.transparency else self._transformed_input
 
-        behavior = torch.zeros((input.shape[0], 3)).to(input.device) if self.func.model.members[0].modulator else None
-        pupil_center = torch.zeros((input.shape[0], 2)).to(input.device) if self.func.model.members[0].shifter else None
+        behavior = torch.zeros((input.shape[0], 3)).to(input.device) if model.model.members[0].modulator else None
+        pupil_center = torch.zeros((input.shape[0], 2)).to(input.device) if model.model.members[0].shifter else None
 
-        mean = self.func.predict_mean(input, behavior=behavior, pupil_center=pupil_center)
-        variance = self.func.predict_variance(input, behavior=behavior, pupil_center=pupil_center)
+        mean = model.predict_mean(input, behavior=behavior, pupil_center=pupil_center)
+        variance = model.predict_variance(input, behavior=behavior, pupil_center=pupil_center)
         return mean, mean, variance
 
     def step(self) -> State:
         """Performs an optimization step."""
         state = dict(i_iter=self.i_iteration, input_=self._current_input.cloned_data)
         self.optimizer.zero_grad()
-        objective, mean, variance = self.evaluate()
+        objective, mean, variance = self.evaluate(self.func)
         evaluation = objective * (self.inhibitory != True) + objective * (self.inhibitory == True) * (-1)
         assert not (
             torch.isinf(evaluation).any() or torch.isnan(evaluation).any()
         ), f"nan or inf value encountered, iteration={self.i_iteration}"
 
         state["evaluation"] = evaluation.item()
+        if self.validation_func is not None:
+            val_objective, _, _ = self.evaluate(self.validation_func)
+            validation_evaluation = val_objective * (self.inhibitory != True) + val_objective * (self.inhibitory == True) * (-1)
+            state["evaluation"] = validation_evaluation.item()
+
         state["transformed_input"] = self._transformed_input.data.cpu().clone()  ### may need to change
 
         scale_reg_term = 0
@@ -185,8 +193,11 @@ class MEI:
                 (-evaluation + reg_term) * (1 - mean_alpha_value * self.transparency_weight)
             ).backward()  ### add transparency to objective; mean_alpha_value here should be a function?
         else:
-            reg_term = self.regularization(self._transformed_input, self.i_iteration) + scale_reg_term
-
+            if self.reference_mei is None:
+                mei_to_be_regularized = self._transformed_input
+            else:
+                mei_to_be_regularized = self._transformed_input - self.reference_mei
+            reg_term = self.regularization(mei_to_be_regularized, self.i_iteration) + scale_reg_term
             (-evaluation + reg_term).backward()
 
         if self._current_input.grad is None:
@@ -205,7 +216,9 @@ class MEI:
         # post process new mei after optimization
         self._current_input.data = self.postprocessing(self._current_input.data, self.i_iteration)
         state["post_processed_input"] = self._current_input.cloned_data
-        _, mean, variance = self.evaluate()
+        if self.test_func is not None:
+            _, mean, variance = self.evaluate(self.test_func)
+
         state["mean"] = mean.item()
         state["variance"] = variance.item()
 
@@ -224,6 +237,8 @@ class MEI:
             )
 
         self._transformed = None
+        if self.i_iteration % 100 == 0:
+            print("Epoch: " + str(self.i_iteration))
         self.i_iteration += 1
         return self.state_cls.from_dict(state)
 
@@ -246,44 +261,44 @@ class MEI:
 
 
 class CEI(MEI):
-    def evaluate(self) -> Tensor:
+    def evaluate(self, model) -> Tensor:
         """Evaluates the function on the current CEI (Certain exciting input). This class creates an input which excites
         the neuron to a certain percentage (ref_level) of the MEI"""
-        _, mean, variance = super().evaluate()
+        _, mean, variance = super().evaluate(model)
 
-        diff = self.ref_level - mean / self.func.mei_mean
+        diff = self.ref_level - mean / model.mei_mean
         objective = -(diff**2)
         return objective, mean, variance
 
 
 class VEI(MEI):
-    def exp_potential_well(self, mean):
-        x = mean / self.func.mei_mean
+    def exp_potential_well(self, mean, model):
+        x = mean / model.mei_mean
         out = torch.exp(-self.scale * (x + self.dx - self.ref_level)) + torch.exp(
             self.scale * (x - self.dx - self.ref_level)
         )
         return out
 
-    def linear_potential_well(self, mean):
-        x = mean / self.func.mei_mean
+    def linear_potential_well(self, mean, model):
+        x = mean / model.mei_mean
         out = self.scale*.5*(x - self.ref_level)*(torch.erf((x - self.ref_level)/np.sqrt(2)/self.dx))
         return out
 
-    def evaluate(self) -> Tensor:
+    def evaluate(self, model) -> Tensor:
         """Evaluates the function on the current VEI (Variably exciting input)."""
-        _, mean, variance = super().evaluate()
+        _, mean, variance = super().evaluate(model)
 
         if self.potential_well_function == "exp":
-            objective = -self.exp_potential_well(mean)
+            objective = -self.exp_potential_well(mean, model)
         elif self.potential_well_function == "linear":
-            objective = -self.linear_potential_well(mean)
+            objective = -self.linear_potential_well(mean, model)
         else:
             raise ValueError()
 
         if self.variance_optimization == "max":
-            objective += variance / self.func.mei_variance
+            objective += variance / model.mei_variance
         elif self.variance_optimization == "min":
-            objective -= variance / self.func.mei_variance
+            objective -= variance / model.mei_variance
         else:
             raise ValueError()
         assert not abs(objective.item()) > 1.e5, "very big objective, iteration: {}".format(self.i_iteration)
