@@ -302,8 +302,8 @@ class MEITemplateMixin:
         table = self & new_key
 
         if len(table) != 0:
-            method_fns, method_hashs, method_configs, means, variances, meis = table.load_data(
-                ["method_fn", "method_hash", "method_config", "mean", "variance", "mei"]
+            method_fns, method_hashs, method_configs, means, meis = table.load_data(
+                ["method_fn", "method_hash", "method_config", "mean", "mei"]
             )
 
             # Find which indices are for MEIs and CEIs
