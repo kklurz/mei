@@ -146,33 +146,30 @@ class MEI:
     def mean_alpha_value(self) -> Tensor:
         return torch.mean(self._current_input.tensor[:, -1, ...])
 
-    def evaluate(self, model) -> Tensor:
+    def evaluate(self, model, no_grad) -> Tensor:
         """Evaluates the function on the current MEI."""
         input = self.transparentize().float() if self.transparency else self._transformed_input
-
         behavior = torch.zeros((input.shape[0], 3)).to(input.device) if model.model.members[0].modulator else None
         pupil_center = torch.zeros((input.shape[0], 2)).to(input.device) if model.model.members[0].shifter else None
 
-        mean = model.predict_mean(input, behavior=behavior, pupil_center=pupil_center)
-        variance = model.predict_variance(input, behavior=behavior, pupil_center=pupil_center)
+        if no_grad:
+            with torch.no_grad():
+                mean = model.predict_mean(input, behavior=behavior, pupil_center=pupil_center)
+                variance = model.predict_variance(input, behavior=behavior, pupil_center=pupil_center)
+        else:
+            mean = model.predict_mean(input, behavior=behavior, pupil_center=pupil_center)
+            variance = model.predict_variance(input, behavior=behavior, pupil_center=pupil_center)
         return mean, mean, variance
 
     def step(self) -> State:
         """Performs an optimization step."""
         state = dict(i_iter=self.i_iteration, input_=self._current_input.cloned_data)
         self.optimizer.zero_grad()
-        objective, mean, variance = self.evaluate(self.func)
+        objective, mean, variance = self.evaluate(self.func, no_grad=False)
         evaluation = objective * (self.inhibitory != True) + objective * (self.inhibitory == True) * (-1)
         assert not (
             torch.isinf(evaluation).any() or torch.isnan(evaluation).any()
         ), f"nan or inf value encountered, iteration={self.i_iteration}"
-
-        state["evaluation"] = evaluation.item()
-        if self.validation_func is not None:
-            val_objective, _, _ = self.evaluate(self.validation_func)
-            validation_evaluation = val_objective * (self.inhibitory != True) + val_objective * (self.inhibitory == True) * (-1)
-            state["evaluation"] = validation_evaluation.item()
-
         state["transformed_input"] = self._transformed_input.data.cpu().clone()  ### may need to change
 
         scale_reg_term = 0
@@ -197,6 +194,7 @@ class MEI:
                 mei_to_be_regularized = self._transformed_input
             else:
                 mei_to_be_regularized = self._transformed_input - self.reference_mei
+
             reg_term = self.regularization(mei_to_be_regularized, self.i_iteration) + scale_reg_term
             (-evaluation + reg_term).backward()
 
@@ -205,8 +203,8 @@ class MEI:
 
         if hasattr(self.func, "zero_grad_mask"):
             self._current_input.grad[self.func.zero_grad_mask] = 0
-        state["reg_term"] = reg_term.item()
 
+        state["reg_term"] = reg_term.item()
         state["grad"] = self._current_input.cloned_grad
         self._current_input.grad = self.precondition(self._current_input.grad, self.i_iteration)
         # update gradient use transparency gradient
@@ -216,9 +214,17 @@ class MEI:
         # post process new mei after optimization
         self._current_input.data = self.postprocessing(self._current_input.data, self.i_iteration)
         state["post_processed_input"] = self._current_input.cloned_data
-        if self.test_func is not None:
-            _, mean, variance = self.evaluate(self.test_func)
 
+        self.optimizer.zero_grad()
+        if self.validation_func is not None:
+            val_objective, _, _ = self.evaluate(self.validation_func, no_grad=True)
+            validation_evaluation = val_objective * (self.inhibitory != True) + val_objective * (self.inhibitory == True) * (-1)
+            evaluation = validation_evaluation
+
+        if self.test_func is not None:
+            _, mean, variance = self.evaluate(self.test_func, no_grad=True)
+
+        state["evaluation"] = evaluation.item()
         state["mean"] = mean.item()
         state["variance"] = variance.item()
 
@@ -261,10 +267,10 @@ class MEI:
 
 
 class CEI(MEI):
-    def evaluate(self, model) -> Tensor:
+    def evaluate(self, model, no_grad) -> Tensor:
         """Evaluates the function on the current CEI (Certain exciting input). This class creates an input which excites
         the neuron to a certain percentage (ref_level) of the MEI"""
-        _, mean, variance = super().evaluate(model)
+        _, mean, variance = super().evaluate(model, no_grad=no_grad)
 
         diff = self.ref_level - mean / model.mei_mean
         objective = -(diff**2)
@@ -284,9 +290,9 @@ class VEI(MEI):
         out = self.scale*.5*(x - self.ref_level)*(torch.erf((x - self.ref_level)/np.sqrt(2)/self.dx))
         return out
 
-    def evaluate(self, model) -> Tensor:
+    def evaluate(self, model, no_grad) -> Tensor:
         """Evaluates the function on the current VEI (Variably exciting input)."""
-        _, mean, variance = super().evaluate(model)
+        _, mean, variance = super().evaluate(model, no_grad=no_grad)
 
         if self.potential_well_function == "exp":
             objective = -self.exp_potential_well(mean, model)

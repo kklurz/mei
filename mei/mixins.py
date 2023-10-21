@@ -318,10 +318,12 @@ class MEITemplateMixin:
                     max_mei_idx = np.argmax(means[idx_mei])
                     model.mei = meis[idx_mei][max_mei_idx]
 
-                    behavior = torch.zeros((model.mei.shape[0], 3)).to(device) if model.model.members[0].modulator else None
-                    pupil_center = torch.zeros((model.mei.shape[0], 2)).to(device) if model.model.members[0].shifter else None
-                    model.mei_mean = model.predict_mean(torch.from_numpy(model.mei).to(device), behavior=behavior, pupil_center=pupil_center)
-                    model.mei_variance = model.predict_variance(torch.from_numpy(model.mei).to(device), behavior=behavior, pupil_center=pupil_center)
+                    with torch.no_grad():
+                        input = torch.from_numpy(model.mei).to(device)
+                        behavior = torch.zeros((input.shape[0], 3)).to(device) if model.model.members[0].modulator else None
+                        pupil_center = torch.zeros((input.shape[0], 2)).to(device) if model.model.members[0].shifter else None
+                        model.mei_mean = model.predict_mean(input, behavior=behavior, pupil_center=pupil_center)
+                        model.mei_variance = model.predict_variance(input, behavior=behavior, pupil_center=pupil_center)
 
                 # If there are CEI entries: add all CEIs to the model with their respective rev_level
                 if len(idx_cei) != 0:
