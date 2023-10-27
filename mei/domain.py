@@ -20,6 +20,7 @@ class Input:
         self._tensor.requires_grad_()
         self.pixel_tanh_scale_ = pixel_tanh_scale
         self.reference_mei = reference_mei
+        self.delta_v = None
 
     @property
     def pixel_tanh_scale(self) -> Tensor:
@@ -36,8 +37,8 @@ class Input:
                 projection = (
                     (v_tilde * v_mu).sum() / torch.norm(v_mu) ** 2
                 ) * v_mu
-                delta_v = v_tilde - projection
-                out = v_mu + delta_v
+                self.delta_v = v_tilde - projection
+                out = v_mu + self.delta_v
 
 
                 import numpy as np
@@ -48,12 +49,13 @@ class Input:
                     nominator = (u*v).sum()
                     denominator = np.linalg.norm(u)*np.linalg.norm(v)
                     return np.arccos(nominator/denominator)
-                assert np.degrees(angle(v_mu, delta_v)).round(1) == 90.
+                assert np.degrees(angle(v_mu, self.delta_v)).round(1) == 90.
 
 
 
 
                 out = out.reshape(self._tensor.shape)
+                self.delta_v = self.delta_v.reshape(self._tensor.shape)
             else:
                 out = self._tensor
             return out

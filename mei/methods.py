@@ -176,10 +176,14 @@ def gradient_ascent(
     if config.get("orthogonal_vei", False):
         if config["orthogonal_vei"]["mei_type"] == "MEI":
             reference_mei = model.mei
-        else:
+        elif config["orthogonal_vei"]["mei_type"] == "CEI":
             ref_level = config["orthogonal_vei"]["ref_level"]
             l1 = config["orthogonal_vei"]["l1"]
             reference_mei = model.cei[ref_level][l1]
+        elif config["orthogonal_vei"]["mei_type"] == "MENI":
+            reference_mei = model.meni
+        else:
+            raise ValueError()
         reference_mei = torch.from_numpy(reference_mei).to(config["device"])
         print("reference_mei set!")
     else:
@@ -205,5 +209,5 @@ def gradient_ascent(
         test_func=test_func,
     )
 
-    final_evaluation, mei, mean, variance = optimize_func(mei, stopper, tracker)
-    return mei, final_evaluation, tracker.log, mean, variance
+    final_evaluation, mei, mean, variance, delta_v = optimize_func(mei, stopper, tracker)
+    return mei, final_evaluation, tracker.log, mean, variance, delta_v

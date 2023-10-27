@@ -197,7 +197,7 @@ class MEIMethodMixin:
             mei_class = optimization.CEI
         else:
             raise ValueError(f"mei_class_name '{mei_class_name}' not recognized")
-        mei, score, output, mean, variance = method_fn(
+        mei, score, output, mean, variance, delta_v = method_fn(
             dataloaders,
             model,
             method_config,
@@ -206,6 +206,7 @@ class MEIMethodMixin:
             validation_func=validation_func,
             test_func=test_func,
         )
+        output["delta_v"] = delta_v.cpu().data.numpy()
         return dict(key, mei=mei, score=score, output=output, mean=mean, variance=variance)
 
     def generate_ringmei(
@@ -249,6 +250,7 @@ class MEITemplateMixin:
     selector_table = None
     method_table = None
     seed_table = None
+    meni_table = None
     model_loader_class = integration.ModelLoader
     save = staticmethod(torch.save)
     get_temp_dir = tempfile.TemporaryDirectory
@@ -301,25 +303,35 @@ class MEITemplateMixin:
         new_key = {k: v for k, v in key.items() if k not in ["method_fn", "method_hash"]}
         table = self & new_key
 
-        if len(table) != 0:
-            method_fns, method_hashs, method_configs, means, meis = table.load_data(
-                ["method_fn", "method_hash", "method_config", "mean", "mei"]
-            )
+        for model in models:
+            model.eval()
+            model.to(device)
+            # If there are MEI entries: add mean, variance and MEI of the max MEI to the model
 
-            # Find which indices are for MEIs and CEIs
-            idx_mei = np.where([config.get("mei_class_name", "MEI") == "MEI" for config in method_configs])[0]
-            idx_cei = np.where([config.get("mei_class_name", "MEI") == "CEI" for config in method_configs])[0]
+            if len(self.meni_table() & key) != 0:
+                meni = (self.meni_table() & key).fetch1("meni")
+                model.meni = meni
 
-            for model in models:
-                model.eval()
-                model.to(device)
-                # If there are MEI entries: add mean, variance and MEI of the max MEI to the model
+            if len(table) != 0:
+                method_fns, method_hashs, method_configs, means, meis = table.load_data(
+                    ["method_fn", "method_hash", "method_config", "mean", "mei"]
+                )
+
+                # Find which indices are for MEIs and CEIs
+                idx_mei = np.where([config.get("mei_class_name", "MEI") == "MEI" for config in method_configs])[0]
+                idx_cei = np.where([config.get("mei_class_name", "MEI") == "CEI" for config in method_configs])[0]
+
                 if len(idx_mei) != 0:
                     max_mei_idx = np.argmax(means[idx_mei])
                     model.mei = meis[idx_mei][max_mei_idx]
 
                     with torch.no_grad():
                         input = torch.from_numpy(model.mei).to(device)
+                        if "orthogonal_vei" in original_method_config:
+                            if original_method_config["orthogonal_vei"]["mei_type"] == "MENI":
+                                input = torch.from_numpy(model.meni).to(device)
+                                print("MENI used...")
+
                         behavior = torch.zeros((input.shape[0], 3)).to(device) if model.model.members[0].modulator else None
                         pupil_center = torch.zeros((input.shape[0], 2)).to(device) if model.model.members[0].shifter else None
                         model.mei_mean = model.predict_mean(input, behavior=behavior, pupil_center=pupil_center)

@@ -334,4 +334,4 @@ def optimize(mei: MEI, stopper: OptimizationStopper, tracker: Tracker) -> Tuple[
     if hasattr(stopper, "best_state"):
         print("Restoring best state...")
         current_state = stopper.best_state
-    return current_state.evaluation, current_state.post_processed_input, current_state.mean, current_state.variance
+    return current_state.evaluation, current_state.post_processed_input, current_state.mean, current_state.variance, mei._current_input.delta_v
