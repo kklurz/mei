@@ -206,7 +206,7 @@ class MEIMethodMixin:
             validation_func=validation_func,
             test_func=test_func,
         )
-        output["delta_v"] = delta_v.cpu().data.numpy()
+        output["delta_v"] = delta_v.cpu().data.numpy() if delta_v is not None else None
         return dict(key, mei=mei, score=score, output=output, mean=mean, variance=variance)
 
     def generate_ringmei(
